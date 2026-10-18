@@ -5,10 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="ETH Tracker">
+<meta name="apple-mobile-web-app-title" content="Bot">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0e1022">
-<title>ETH Tracker</title>
+<title>Bot</title>
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' fill='%23161a3a'/%3E%3Cpath d='M90 30l-45 76 45 27 45-27z' fill='%23a5b4fc'/%3E%3Cpath d='M90 142l-45-27 45 37 45-37z' fill='%236366f1'/%3E%3C/svg%3E">
 <style>
 :root{--bg:#f4f5fb;--card:#fff;--ink:#12142b;--mute:#6b7090;--line:#e3e5f2;--up:#0f9d6b;--down:#d6334f;--accent:#4f46e5;
@@ -36,17 +36,36 @@ svg{width:100%;height:220px;display:block}
 .stat span{color:var(--mute);font-size:12.5px}
 .trend{font-size:15px;line-height:1.5}
 .refresh{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:7px 12px;font-size:13px}
+.bar{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:15px;font-weight:600}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--mute)}
+.bar.on .dot{background:var(--up)}
+.acts{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+.act{padding:14px 0;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-size:16px;font-weight:600}
+.act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.act.start{background:var(--up);border-color:var(--up);color:#fff}
+.act.stop{background:var(--down);border-color:var(--down);color:#fff}
+.act:disabled{opacity:.45;cursor:default}
+#msg{color:var(--mute);font-size:13.5px;margin-top:10px;min-height:18px}
 #err{color:var(--down);font-size:13.5px;margin-top:12px;min-height:18px}
 </style>
 </head>
 <body>
 <main>
   <header>
-    <div><h1>Ethereum · ETH</h1><div class="sub" id="upd">Loading…</div></div>
+    <div><h1>Bot</h1><div class="sub" id="upd">Loading…</div></div>
     <button class="refresh" id="rf">Refresh</button>
   </header>
   <div class="price" id="price">—</div>
   <div class="chg" id="chg">&nbsp;</div>
+
+  <div class="bar" id="bar"><span class="dot"></span><span id="state">Stopped</span></div>
+  <div class="acts">
+    <button class="act start" id="bStart">Start</button>
+    <button class="act stop" id="bStop" disabled>Stop</button>
+    <button class="act" id="bDep">Deposit</button>
+    <button class="act" id="bWd">Withdraw</button>
+  </div>
+  <div id="msg" role="status"></div>
 
   <div class="card">
     <div class="tabs" id="tabs">
@@ -153,6 +172,19 @@ svg{width:100%;height:220px;display:block}
     loadChart().catch(function(e){$("err").textContent=e.message});
   });
   $("rf").addEventListener("click",refresh);
+
+  var running=false;
+  function setRun(v){
+    running=v;
+    $("bar").className="bar"+(v?" on":"");
+    $("state").textContent=v?"Running":"Stopped";
+    $("bStart").disabled=v;$("bStop").disabled=!v;
+    $("msg").textContent=v?"Bot started.":"Bot stopped.";
+  }
+  $("bStart").addEventListener("click",function(){setRun(true)});
+  $("bStop").addEventListener("click",function(){setRun(false)});
+  $("bDep").addEventListener("click",function(){$("msg").textContent="Deposit is not connected to a wallet yet."});
+  $("bWd").addEventListener("click",function(){$("msg").textContent="Withdraw is not connected to a wallet yet."});
 
   refresh();
   timer=setInterval(function(){if(!document.hidden)refresh()},60000);
