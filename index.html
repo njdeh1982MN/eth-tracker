@@ -56,6 +56,10 @@ svg{width:100%;height:220px;display:block}
 .tx{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line);font-size:14px}
 .tx:first-child{border-top:0}
 .tx small{display:block;color:var(--mute);font-size:12px}
+[hidden]{display:none!important}
+.pay input{width:100%;padding:12px;margin-top:8px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:16px}
+.pay .acts{margin-top:12px}
+.tx a{color:var(--accent);font-size:12px}
 #err{color:var(--down);font-size:13.5px;margin-top:12px;min-height:18px}
 </style>
 </head>
@@ -80,6 +84,15 @@ svg{width:100%;height:220px;display:block}
     <button class="act" id="bWd">Withdraw</button>
   </div>
   <div id="msg" role="status"></div>
+  <div class="card pay" id="pay" hidden>
+    <div class="sub" id="payTitle"></div>
+    <input id="payAmt" inputmode="decimal" placeholder="Amount in ETH" autocomplete="off">
+    <input id="payTo" placeholder="Destination address (0x…)" autocomplete="off" autocapitalize="off" spellcheck="false" hidden>
+    <div class="acts">
+      <button class="act start" id="payOk">Confirm</button>
+      <button class="act" id="payNo">Cancel</button>
+    </div>
+  </div>
 
   <div class="card hist">
     <h2>Transaction history</h2>
@@ -100,7 +113,7 @@ svg{width:100%;height:220px;display:block}
 (function(){
   var API="https://api.coingecko.com/api/v3";
   var days=1, timer=null;
-  var WALLET="0x3839EDDeCf921B1BC14e1Eb534cBEd2cACf272cD";
+  var WALLET="0x003d18d76eCdf8a014880D0E09a26bD306B2c967";
   var RPCS=["https://ethereum-rpc.publicnode.com","https://eth.llamarpc.com","https://cloudflare-eth.com"];
   var ethUsd=null, ethBal=null;
   var $=function(i){return document.getElementById(i)};
@@ -181,19 +194,81 @@ svg{width:100%;height:220px;display:block}
 
   $("rf").addEventListener("click",refresh);
 
-  var txs=[];
+  var HKEY="bot_tx_v1", txs=[];
+  try{txs=JSON.parse(localStorage.getItem(HKEY)||"[]")}catch(e){txs=[]}
+  function saveTx(){try{localStorage.setItem(HKEY,JSON.stringify(txs.slice(0,50)))}catch(e){}}
   function renderTx(){
     var box=$("txList");box.innerHTML="";
     if(!txs.length){var e=document.createElement("div");e.className="empty";e.textContent="No transactions yet.";box.appendChild(e);return}
     txs.forEach(function(t){
       var row=document.createElement("div");row.className="tx";
       var l=document.createElement("div");l.textContent=t.type;
-      var sm=document.createElement("small");sm.textContent=t.time;l.appendChild(sm);
-      var r=document.createElement("b");r.textContent=t.amount+" ETH";
+      var sm=document.createElement("small");sm.textContent=t.time+" · "+t.status;l.appendChild(sm);
+      var r=document.createElement("div");r.style.textAlign="right";
+      var b=document.createElement("b");b.textContent=t.amount+" ETH";r.appendChild(b);
+      if(/^0x[0-9a-fA-F]{64}$/.test(t.hash||"")){
+        var a=document.createElement("a");a.href="https://etherscan.io/tx/"+t.hash;a.target="_blank";a.rel="noopener";a.textContent="View";
+        var w=document.createElement("div");w.appendChild(a);r.appendChild(w);
+      }
       row.appendChild(l);row.appendChild(r);box.appendChild(row);
     });
   }
   renderTx();
+
+  var mode=null, SHORT=WALLET.slice(0,6)+"…"+WALLET.slice(-4);
+  function openPay(m){
+    mode=m;$("pay").hidden=false;
+    $("payTitle").textContent=m==="deposit"?"Deposit ETH to the bot wallet "+SHORT:"Withdraw ETH from the bot wallet "+SHORT;
+    $("payTo").hidden=m!=="withdraw";
+    $("payAmt").value="";$("payTo").value="";$("msg").textContent="";
+  }
+  function closePay(){$("pay").hidden=true;mode=null}
+  function toWei(str){
+    if(!/^\d+(\.\d{1,18})?$/.test(str))return null;
+    var p=str.split("."),f=(p[1]||"").padEnd(18,"0");
+    var w=BigInt(p[0])*BigInt("1000000000000000000")+BigInt(f);
+    return w>BigInt(0)?w:null;
+  }
+  function watch(t){
+    var n=0;
+    var iv=setInterval(function(){
+      n++;
+      window.ethereum.request({method:"eth_getTransactionReceipt",params:[t.hash]}).then(function(r){
+        if(r){clearInterval(iv);t.status=r.status==="0x1"?"Confirmed":"Failed";saveTx();renderTx();loadWallet()}
+      }).catch(function(){});
+      if(n>120)clearInterval(iv);
+    },5000);
+  }
+  async function submitPay(){
+    var prov=window.ethereum, msg=$("msg");
+    if(!prov){msg.textContent="Open this page in the browser inside your wallet app (MetaMask, Trust Wallet, etc.) to deposit or withdraw.";return}
+    var wei=toWei($("payAmt").value.trim());
+    if(wei===null){msg.textContent="Enter a valid amount in ETH.";return}
+    var to=WALLET;
+    if(mode==="withdraw"){
+      to=$("payTo").value.trim();
+      if(!/^0x[a-fA-F0-9]{40}$/.test(to)){msg.textContent="Enter a valid destination address (0x, then 40 characters).";return}
+    }
+    $("payOk").disabled=true;
+    try{
+      var accts=await prov.request({method:"eth_requestAccounts"});
+      var from=accts[0];
+      if(mode==="withdraw"&&from.toLowerCase()!==WALLET.toLowerCase()){
+        msg.textContent="To withdraw, select the bot wallet "+SHORT+" in your wallet app.";return;
+      }
+      var cid=await prov.request({method:"eth_chainId"});
+      if(cid!=="0x1")await prov.request({method:"wallet_switchEthereumChain",params:[{chainId:"0x1"}]});
+      var hash=await prov.request({method:"eth_sendTransaction",params:[{from:from,to:to,value:"0x"+wei.toString(16)}]});
+      var t={type:mode==="deposit"?"Deposit":"Withdraw",amount:$("payAmt").value.trim(),time:new Date().toLocaleString([],{dateStyle:"medium",timeStyle:"short"}),status:"Pending",hash:String(hash)};
+      txs.unshift(t);saveTx();renderTx();watch(t);
+      closePay();msg.textContent="Transaction submitted. It will show as Confirmed below.";
+    }catch(e){
+      msg.textContent=(e&&e.code===4001)?"Cancelled in your wallet.":((e&&e.message)||"Transaction failed.");
+    }finally{$("payOk").disabled=false}
+  }
+  $("payOk").addEventListener("click",submitPay);
+  $("payNo").addEventListener("click",closePay);
+  if(window.ethereum)txs.forEach(function(t){if(t.status==="Pending"&&/^0x[0-9a-fA-F]{64}$/.test(t.hash||""))watch(t)});
 
   var running=false;
   function setRun(v){
@@ -205,10 +280,10 @@ svg{width:100%;height:220px;display:block}
   }
   $("bStart").addEventListener("click",function(){setRun(true)});
   $("bStop").addEventListener("click",function(){setRun(false)});
-  $("bDep").addEventListener("click",function(){$("msg").textContent="Deposit is not connected to a wallet yet."});
-  $("bWd").addEventListener("click",function(){$("msg").textContent="Withdraw is not connected to a wallet yet."});
+  $("bDep").addEventListener("click",function(){openPay("deposit")});
+  $("bWd").addEventListener("click",function(){openPay("withdraw")});
 
-  $("addr").textContent=WALLET;
+  $("addr").textContent=SHORT;
   setInterval(function(){if(!document.hidden)loadWallet()},20000);
   refresh();
   timer=setInterval(function(){if(!document.hidden)refresh()},60000);
