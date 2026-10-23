@@ -21,19 +21,13 @@ header{display:flex;justify-content:space-between;align-items:center;margin-bott
 h1{font-size:18px;margin:0;font-weight:600;letter-spacing:.2px}
 .sub{color:var(--mute);font-size:13px}
 .tag{font-size:13.5px;font-weight:600;color:var(--accent);margin:2px 0 4px}
-.price{font-size:clamp(40px,12vw,56px);font-weight:700;letter-spacing:-1px;margin:4px 0 2px;font-variant-numeric:tabular-nums}
-.chg{font-size:17px;font-weight:600}
 .up{color:var(--up)}.down{color:var(--down)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-top:16px}
-.tabs{display:flex;gap:6px;margin-bottom:10px}
 button{font:inherit;cursor:pointer}
-.tab{flex:1;padding:9px 0;border-radius:10px;border:1px solid var(--line);background:transparent;color:var(--mute);font-size:14px}
-.tab[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
-.tab:focus-visible,.refresh:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-svg{width:100%;height:220px;display:block}
+.refresh:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px}
-.stat b{display:block;font-size:17px;margin-top:2px;font-variant-numeric:tabular-nums}
+.stat b{display:block;font-size:17px;margin-top:2px;font-variant-numeric:tabular-nums;word-break:break-word}
 .stat span{color:var(--mute);font-size:12.5px}
 .trend{font-size:15px;line-height:1.5}
 .refresh{border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:10px;padding:7px 12px;font-size:13px}
@@ -56,10 +50,13 @@ svg{width:100%;height:220px;display:block}
 .tx{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line);font-size:14px}
 .tx:first-child{border-top:0}
 .tx small{display:block;color:var(--mute);font-size:12px}
+.tx a{color:var(--accent);font-size:12px}
+.sim .stats{margin-top:0;margin-bottom:10px}
+.sim .stat{background:var(--bg)}
+.sim .stat b{font-size:15px}
 [hidden]{display:none!important}
 .pay input{width:100%;padding:12px;margin-top:8px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:16px}
 .pay .acts{margin-top:12px}
-.tx a{color:var(--accent);font-size:12px}
 #err{color:var(--down);font-size:13.5px;margin-top:12px;min-height:18px}
 </style>
 </head>
@@ -94,6 +91,18 @@ svg{width:100%;height:220px;display:block}
     </div>
   </div>
 
+  <div class="card hist sim">
+    <h2>Simulation · virtual $200</h2>
+    <div class="stats">
+      <div class="stat"><span>Bot balance</span><b id="sEq">—</b></div>
+      <div class="stat"><span>Profit / loss</span><b id="sPl">—</b></div>
+      <div class="stat"><span>Just holding ETH</span><b id="sHold">—</b></div>
+      <div class="stat"><span>Position</span><b id="sPos">—</b></div>
+    </div>
+    <div class="sub" id="sNote">Connecting to the bot…</div>
+    <div id="sTrades"></div>
+  </div>
+
   <div class="card hist">
     <h2>Transaction history</h2>
     <div id="txList" class="txl"><div class="empty">No transactions yet.</div></div>
@@ -112,13 +121,14 @@ svg{width:100%;height:220px;display:block}
 <script>
 (function(){
   var API="https://api.coingecko.com/api/v3";
-  var days=1, timer=null;
+  var BOT="https://eth-bot.mootafian.workers.dev";
   var WALLET="0x003d18d76eCdf8a014880D0E09a26bD306B2c967";
   var RPCS=["https://ethereum-rpc.publicnode.com","https://eth.llamarpc.com","https://cloudflare-eth.com"];
   var ethUsd=null, ethBal=null;
   var $=function(i){return document.getElementById(i)};
   var usd=function(n,d){return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:d==null?2:d,maximumFractionDigits:d==null?2:d})};
   var pct=function(n){return (n>=0?"+":"")+n.toFixed(2)+"%"};
+  var when=function(t){return new Date(t).toLocaleString([],{dateStyle:"medium",timeStyle:"short"})};
 
   function get(path){
     return fetch(API+path).then(function(r){
@@ -130,7 +140,7 @@ svg{width:100%;height:220px;display:block}
   function sma(vals,n){var s=0;for(var i=vals.length-n;i<vals.length;i++)s+=vals[i];return s/n}
 
   function trendText(vals,change){
-    var first=vals[0],last=vals[vals.length-1];
+    var last=vals[vals.length-1];
     var n=Math.max(5,Math.round(vals.length/5));
     var avg=sma(vals,Math.min(n,vals.length));
     var dir=change>1?"Uptrend":change<-1?"Downtrend":"Sideways";
@@ -139,12 +149,11 @@ svg{width:100%;height:220px;display:block}
   }
 
   function loadChart(){
-    return get("/coins/ethereum/market_chart?vs_currency=usd&days="+days).then(function(d){
+    return get("/coins/ethereum/market_chart?vs_currency=usd&days=1").then(function(d){
       var pts=d.prices;
       if(!pts||pts.length<10) throw new Error("Not enough chart data.");
       var vals=pts.map(function(p){return p[1]});
-      var first=vals[0],last=vals[vals.length-1];
-      var change=(last-first)/first*100;
+      var change=(vals[vals.length-1]-vals[0])/vals[0]*100;
       $("hi").textContent=usd(Math.max.apply(null,vals));
       $("lo").textContent=usd(Math.min.apply(null,vals));
       var rc=$("rc");rc.textContent=pct(change);rc.className=change>=0?"up":"down";
@@ -182,7 +191,7 @@ svg{width:100%;height:220px;display:block}
   }
 
   function refresh(){
-    loadWallet();
+    loadWallet();loadSim();
     $("err").textContent="";
     Promise.all([loadPrice(),loadChart()]).then(function(){
       $("upd").textContent="Updated "+new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
@@ -194,6 +203,58 @@ svg{width:100%;height:220px;display:block}
 
   $("rf").addEventListener("click",refresh);
 
+  /* ---- Simulation bot (runs on the Cloudflare server) ---- */
+  function applySim(s){
+    var on=!!s.running, b=s.startBal||200, eq=s.equity==null?b:s.equity, pl=eq-b;
+    $("bar").className="bar"+(on?" on":"");
+    $("state").textContent=on?"Running":"Stopped";
+    $("bStart").disabled=on;$("bStop").disabled=!on;
+    $("sEq").textContent=usd(eq);
+    var p=$("sPl");p.textContent=(pl>=0?"+":"-")+usd(Math.abs(pl))+" ("+pct(pl/b*100)+")";p.className=pl>=0?"up":"down";
+    $("sHold").textContent=(s.startPrice&&s.price)?usd(b*s.price/s.startPrice):"—";
+    $("sPos").textContent=s.qty>0?s.qty.toFixed(4)+" ETH @ "+usd(s.entryPrice):"None";
+    var rs=s.ind&&s.ind.rsi!=null?" · RSI "+s.ind.rsi.toFixed(0):"";
+    $("sNote").textContent=(s.note||"")+rs+(s.lastTick?" · last check "+new Date(s.lastTick).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"");
+    var box=$("sTrades");box.innerHTML="";
+    var list=(s.trades||[]).slice(0,20);
+    if(!list.length){var e=document.createElement("div");e.className="empty";e.textContent="No simulated trades yet.";box.appendChild(e);return}
+    list.forEach(function(t){
+      var row=document.createElement("div");row.className="tx";
+      var l=document.createElement("div");l.textContent=t.type+" · "+t.reason;
+      var sm=document.createElement("small");sm.textContent=when(t.time);l.appendChild(sm);
+      var r=document.createElement("div");r.style.textAlign="right";
+      var bb=document.createElement("b");bb.textContent=usd(t.price);r.appendChild(bb);
+      if(t.pnl!=null){var q=document.createElement("small");q.className=t.pnl>=0?"up":"down";q.textContent=(t.pnl>=0?"+":"-")+usd(Math.abs(t.pnl));r.appendChild(q)}
+      row.appendChild(l);row.appendChild(r);box.appendChild(row);
+    });
+  }
+  function loadSim(){
+    fetch(BOT+"/status").then(function(r){return r.json()}).then(applySim)
+      .catch(function(){$("sNote").textContent="Could not reach the bot server."});
+  }
+  function botKey(){
+    var k="";try{k=localStorage.getItem("bot_key")||""}catch(e){}
+    if(!k){k=(prompt("Enter the bot password")||"").trim();if(k){try{localStorage.setItem("bot_key",k)}catch(e){}}}
+    return k;
+  }
+  function cmd(path){
+    var k=botKey();if(!k)return;
+    $("bStart").disabled=true;$("bStop").disabled=true;$("msg").textContent="";
+    fetch(BOT+path,{method:"POST",headers:{"X-Admin-Key":k}}).then(function(r){
+      if(r.status===401){try{localStorage.removeItem("bot_key")}catch(e){}throw new Error("Wrong password. Try again.")}
+      if(!r.ok)throw new Error("Server error "+r.status);
+      return r.json();
+    }).then(function(s){
+      applySim(s);$("msg").textContent=s.running?"Bot started (simulation only, no real money).":"Bot stopped.";
+    }).catch(function(e){
+      $("msg").textContent=(e&&e.message)||"Could not reach the bot server.";
+      $("bStart").disabled=false;$("bStop").disabled=false;loadSim();
+    });
+  }
+  $("bStart").addEventListener("click",function(){cmd("/start")});
+  $("bStop").addEventListener("click",function(){cmd("/stop")});
+
+  /* ---- Wallet deposit / withdraw (approved in your wallet app) ---- */
   var HKEY="bot_tx_v1", txs=[];
   try{txs=JSON.parse(localStorage.getItem(HKEY)||"[]")}catch(e){txs=[]}
   function saveTx(){try{localStorage.setItem(HKEY,JSON.stringify(txs.slice(0,50)))}catch(e){}}
@@ -259,7 +320,7 @@ svg{width:100%;height:220px;display:block}
       var cid=await prov.request({method:"eth_chainId"});
       if(cid!=="0x1")await prov.request({method:"wallet_switchEthereumChain",params:[{chainId:"0x1"}]});
       var hash=await prov.request({method:"eth_sendTransaction",params:[{from:from,to:to,value:"0x"+wei.toString(16)}]});
-      var t={type:mode==="deposit"?"Deposit":"Withdraw",amount:$("payAmt").value.trim(),time:new Date().toLocaleString([],{dateStyle:"medium",timeStyle:"short"}),status:"Pending",hash:String(hash)};
+      var t={type:mode==="deposit"?"Deposit":"Withdraw",amount:$("payAmt").value.trim(),time:when(new Date()),status:"Pending",hash:String(hash)};
       txs.unshift(t);saveTx();renderTx();watch(t);
       closePay();msg.textContent="Transaction submitted. It will show as Confirmed below.";
     }catch(e){
@@ -268,25 +329,14 @@ svg{width:100%;height:220px;display:block}
   }
   $("payOk").addEventListener("click",submitPay);
   $("payNo").addEventListener("click",closePay);
-  if(window.ethereum)txs.forEach(function(t){if(t.status==="Pending"&&/^0x[0-9a-fA-F]{64}$/.test(t.hash||""))watch(t)});
-
-  var running=false;
-  function setRun(v){
-    running=v;
-    $("bar").className="bar"+(v?" on":"");
-    $("state").textContent=v?"Running":"Stopped";
-    $("bStart").disabled=v;$("bStop").disabled=!v;
-    $("msg").textContent=v?"Bot started.":"Bot stopped.";
-  }
-  $("bStart").addEventListener("click",function(){setRun(true)});
-  $("bStop").addEventListener("click",function(){setRun(false)});
   $("bDep").addEventListener("click",function(){openPay("deposit")});
   $("bWd").addEventListener("click",function(){openPay("withdraw")});
+  if(window.ethereum)txs.forEach(function(t){if(t.status==="Pending"&&/^0x[0-9a-fA-F]{64}$/.test(t.hash||""))watch(t)});
 
   $("addr").textContent=SHORT;
-  setInterval(function(){if(!document.hidden)loadWallet()},20000);
+  setInterval(function(){if(!document.hidden){loadWallet();loadSim()}},20000);
   refresh();
-  timer=setInterval(function(){if(!document.hidden)refresh()},60000);
+  setInterval(function(){if(!document.hidden)refresh()},60000);
 })();
 </script>
 </body>
