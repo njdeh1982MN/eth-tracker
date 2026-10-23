@@ -41,9 +41,9 @@ button{font:inherit;cursor:pointer}
 .act.stop{background:var(--down);border-color:var(--down);color:#fff}
 .act:disabled{opacity:.45;cursor:default}
 #msg{color:var(--mute);font-size:13.5px;margin-top:10px;min-height:18px}
-.wallet{margin-top:0}
+.wallet{margin-top:0;border:2px solid var(--up)}
 .bal{font-size:clamp(34px,10vw,46px);font-weight:700;letter-spacing:-1px;margin:6px 0 2px;font-variant-numeric:tabular-nums}
-.addr{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--mute);margin-top:8px;word-break:break-all}
+.how{font-size:13.5px;line-height:1.5;color:var(--mute);margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
 .hist{margin-top:16px}
 .hist h2{font-size:16px;margin:0 0 10px;font-weight:600;text-align:left}
 .empty{color:var(--mute);font-size:14px;padding:18px 0;text-align:center}
@@ -67,10 +67,9 @@ button{font:inherit;cursor:pointer}
     <button class="refresh" id="rf">Refresh</button>
   </header>
   <div class="card wallet">
-    <div class="sub">Wallet balance</div>
-    <div class="bal" id="bal">—</div>
-    <div class="sub" id="balUsd">&nbsp;</div>
-    <div class="addr" id="addr"></div>
+    <div class="sub">Balance</div>
+    <div class="bal" id="bal">$200.00</div>
+    <div class="sub">Testing from Oct. 23 to Nov. 2, 2026</div>
   </div>
 
   <div class="bar" id="bar"><span class="dot"></span><span id="state">Stopped</span></div>
@@ -92,15 +91,15 @@ button{font:inherit;cursor:pointer}
   </div>
 
   <div class="card hist sim">
-    <h2>Simulation · virtual $200</h2>
+    <h2>Simulation</h2>
     <div class="stats">
-      <div class="stat"><span>Bot balance</span><b id="sEq">—</b></div>
       <div class="stat"><span>Profit / loss</span><b id="sPl">—</b></div>
       <div class="stat"><span>Just holding ETH</span><b id="sHold">—</b></div>
       <div class="stat"><span>Position</span><b id="sPos">—</b></div>
+      <div class="stat"><span>Trades made</span><b id="sCount">0</b></div>
     </div>
     <div class="sub" id="sNote">Connecting to the bot…</div>
-    <div id="sTrades"></div>
+    <div class="how"><b>What the bot does:</b> every 5 minutes it checks ETH's hourly price trend. It buys when the short-term average rises above the long-term average (EMA 12 over EMA 26) and the market is not overheated (RSI below 70). It sells when the price drops 2% (stop loss), gains 4% (take profit), or the trend turns down. It trades with its whole balance, one trade at a time, includes fees and slippage, and pauses if the balance falls 10% from its peak.</div>
   </div>
 
   <div class="card hist">
@@ -123,8 +122,6 @@ button{font:inherit;cursor:pointer}
   var API="https://api.coingecko.com/api/v3";
   var BOT="https://eth-bot.mootafian.workers.dev";
   var WALLET="0x003d18d76eCdf8a014880D0E09a26bD306B2c967";
-  var RPCS=["https://ethereum-rpc.publicnode.com","https://eth.llamarpc.com","https://cloudflare-eth.com"];
-  var ethUsd=null, ethBal=null;
   var $=function(i){return document.getElementById(i)};
   var usd=function(n,d){return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:d==null?2:d,maximumFractionDigits:d==null?2:d})};
   var pct=function(n){return (n>=0?"+":"")+n.toFixed(2)+"%"};
@@ -164,34 +161,12 @@ button{font:inherit;cursor:pointer}
   function loadPrice(){
     return get("/coins/markets?vs_currency=usd&ids=ethereum").then(function(a){
       var e=a[0];
-      ethUsd=e.current_price;
-      showBal();
       $("mc").textContent="$"+(e.market_cap/1e9).toFixed(1)+"B";
     });
   }
 
-  function rpc(i){
-    if(i>=RPCS.length) return Promise.reject(new Error("Could not read the wallet balance. Retrying shortly."));
-    return fetch(RPCS[i],{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({jsonrpc:"2.0",id:1,method:"eth_getBalance",params:[WALLET.toLowerCase(),"latest"]})})
-      .then(function(r){if(!r.ok)throw 0;return r.json()})
-      .then(function(j){if(!j||!j.result)throw 0;return j.result})
-      .catch(function(){return rpc(i+1)});
-  }
-
-  function showBal(){
-    if(ethBal==null)return;
-    $("bal").textContent=ethBal.toLocaleString("en-US",{minimumFractionDigits:4,maximumFractionDigits:4})+" ETH";
-    $("balUsd").textContent=ethUsd!=null?"≈ "+usd(ethBal*ethUsd):"";
-  }
-
-  function loadWallet(){
-    return rpc(0).then(function(h){ethBal=parseInt(h,16)/1e18;showBal()})
-      .catch(function(e){$("balUsd").textContent=e.message});
-  }
-
   function refresh(){
-    loadWallet();loadSim();
+    loadSim();
     $("err").textContent="";
     Promise.all([loadPrice(),loadChart()]).then(function(){
       $("upd").textContent="Updated "+new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
@@ -204,29 +179,20 @@ button{font:inherit;cursor:pointer}
   $("rf").addEventListener("click",refresh);
 
   /* ---- Simulation bot (runs on the Cloudflare server) ---- */
+  var simTrades=[];
   function applySim(s){
     var on=!!s.running, b=s.startBal||200, eq=s.equity==null?b:s.equity, pl=eq-b;
     $("bar").className="bar"+(on?" on":"");
     $("state").textContent=on?"Running":"Stopped";
     $("bStart").disabled=on;$("bStop").disabled=!on;
-    $("sEq").textContent=usd(eq);
+    $("bal").textContent=usd(eq);
     var p=$("sPl");p.textContent=(pl>=0?"+":"-")+usd(Math.abs(pl))+" ("+pct(pl/b*100)+")";p.className=pl>=0?"up":"down";
     $("sHold").textContent=(s.startPrice&&s.price)?usd(b*s.price/s.startPrice):"—";
     $("sPos").textContent=s.qty>0?s.qty.toFixed(4)+" ETH @ "+usd(s.entryPrice):"None";
+    $("sCount").textContent=(s.trades||[]).length;
     var rs=s.ind&&s.ind.rsi!=null?" · RSI "+s.ind.rsi.toFixed(0):"";
     $("sNote").textContent=(s.note||"")+rs+(s.lastTick?" · last check "+new Date(s.lastTick).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"");
-    var box=$("sTrades");box.innerHTML="";
-    var list=(s.trades||[]).slice(0,20);
-    if(!list.length){var e=document.createElement("div");e.className="empty";e.textContent="No simulated trades yet.";box.appendChild(e);return}
-    list.forEach(function(t){
-      var row=document.createElement("div");row.className="tx";
-      var l=document.createElement("div");l.textContent=t.type+" · "+t.reason;
-      var sm=document.createElement("small");sm.textContent=when(t.time);l.appendChild(sm);
-      var r=document.createElement("div");r.style.textAlign="right";
-      var bb=document.createElement("b");bb.textContent=usd(t.price);r.appendChild(bb);
-      if(t.pnl!=null){var q=document.createElement("small");q.className=t.pnl>=0?"up":"down";q.textContent=(t.pnl>=0?"+":"-")+usd(Math.abs(t.pnl));r.appendChild(q)}
-      row.appendChild(l);row.appendChild(r);box.appendChild(row);
-    });
+    simTrades=s.trades||[];renderHist();
   }
   function loadSim(){
     fetch(BOT+"/status").then(function(r){return r.json()}).then(applySim)
@@ -245,7 +211,7 @@ button{font:inherit;cursor:pointer}
       if(!r.ok)throw new Error("Server error "+r.status);
       return r.json();
     }).then(function(s){
-      applySim(s);$("msg").textContent=s.running?"Bot started (simulation only, no real money).":"Bot stopped.";
+      applySim(s);$("msg").textContent=s.running?"Bot started. Testing from Oct. 23 to Nov. 2, 2026.":"Bot stopped.";
     }).catch(function(e){
       $("msg").textContent=(e&&e.message)||"Could not reach the bot server.";
       $("bStart").disabled=false;$("bStop").disabled=false;loadSim();
@@ -258,28 +224,38 @@ button{font:inherit;cursor:pointer}
   var HKEY="bot_tx_v1", txs=[];
   try{txs=JSON.parse(localStorage.getItem(HKEY)||"[]")}catch(e){txs=[]}
   function saveTx(){try{localStorage.setItem(HKEY,JSON.stringify(txs.slice(0,50)))}catch(e){}}
-  function renderTx(){
+  function renderHist(){
+    var items=[];
+    simTrades.slice(0,50).forEach(function(t){items.push({ts:Date.parse(t.time)||0,sim:t})});
+    txs.forEach(function(t){items.push({ts:t.ts||0,tx:t})});
+    items.sort(function(a,b){return b.ts-a.ts});
     var box=$("txList");box.innerHTML="";
-    if(!txs.length){var e=document.createElement("div");e.className="empty";e.textContent="No transactions yet.";box.appendChild(e);return}
-    txs.forEach(function(t){
+    if(!items.length){var e=document.createElement("div");e.className="empty";e.textContent="No transactions yet.";box.appendChild(e);return}
+    items.forEach(function(it){
       var row=document.createElement("div");row.className="tx";
-      var l=document.createElement("div");l.textContent=t.type;
-      var sm=document.createElement("small");sm.textContent=t.time+" · "+t.status;l.appendChild(sm);
-      var r=document.createElement("div");r.style.textAlign="right";
-      var b=document.createElement("b");b.textContent=t.amount+" ETH";r.appendChild(b);
-      if(/^0x[0-9a-fA-F]{64}$/.test(t.hash||"")){
-        var a=document.createElement("a");a.href="https://etherscan.io/tx/"+t.hash;a.target="_blank";a.rel="noopener";a.textContent="View";
-        var w=document.createElement("div");w.appendChild(a);r.appendChild(w);
+      var l=document.createElement("div"),sm=document.createElement("small"),r=document.createElement("div"),b=document.createElement("b");
+      r.style.textAlign="right";
+      if(it.sim){
+        var t=it.sim;
+        l.textContent=t.type+" (test) · "+t.reason;sm.textContent=when(t.time);b.textContent=usd(t.price);r.appendChild(b);
+        if(t.pnl!=null){var q=document.createElement("small");q.className=t.pnl>=0?"up":"down";q.textContent=(t.pnl>=0?"+":"-")+usd(Math.abs(t.pnl));r.appendChild(q)}
+      }else{
+        var x=it.tx;
+        l.textContent=x.type;sm.textContent=x.time+" · "+x.status;b.textContent=x.amount+" ETH";r.appendChild(b);
+        if(/^0x[0-9a-fA-F]{64}$/.test(x.hash||"")){
+          var a=document.createElement("a");a.href="https://etherscan.io/tx/"+x.hash;a.target="_blank";a.rel="noopener";a.textContent="View";
+          var w=document.createElement("div");w.appendChild(a);r.appendChild(w);
+        }
       }
-      row.appendChild(l);row.appendChild(r);box.appendChild(row);
+      l.appendChild(sm);row.appendChild(l);row.appendChild(r);box.appendChild(row);
     });
   }
-  renderTx();
+  renderHist();
 
-  var mode=null, SHORT=WALLET.slice(0,6)+"…"+WALLET.slice(-4);
+  var mode=null;
   function openPay(m){
     mode=m;$("pay").hidden=false;
-    $("payTitle").textContent=m==="deposit"?"Deposit ETH to the bot wallet "+SHORT:"Withdraw ETH from the bot wallet "+SHORT;
+    $("payTitle").textContent=m==="deposit"?"Deposit ETH to the bot wallet":"Withdraw ETH from the bot wallet";
     $("payTo").hidden=m!=="withdraw";
     $("payAmt").value="";$("payTo").value="";$("msg").textContent="";
   }
@@ -295,7 +271,7 @@ button{font:inherit;cursor:pointer}
     var iv=setInterval(function(){
       n++;
       window.ethereum.request({method:"eth_getTransactionReceipt",params:[t.hash]}).then(function(r){
-        if(r){clearInterval(iv);t.status=r.status==="0x1"?"Confirmed":"Failed";saveTx();renderTx();loadWallet()}
+        if(r){clearInterval(iv);t.status=r.status==="0x1"?"Confirmed":"Failed";saveTx();renderHist()}
       }).catch(function(){});
       if(n>120)clearInterval(iv);
     },5000);
@@ -315,13 +291,13 @@ button{font:inherit;cursor:pointer}
       var accts=await prov.request({method:"eth_requestAccounts"});
       var from=accts[0];
       if(mode==="withdraw"&&from.toLowerCase()!==WALLET.toLowerCase()){
-        msg.textContent="To withdraw, select the bot wallet "+SHORT+" in your wallet app.";return;
+        msg.textContent="To withdraw, select the bot wallet in your wallet app.";return;
       }
       var cid=await prov.request({method:"eth_chainId"});
       if(cid!=="0x1")await prov.request({method:"wallet_switchEthereumChain",params:[{chainId:"0x1"}]});
       var hash=await prov.request({method:"eth_sendTransaction",params:[{from:from,to:to,value:"0x"+wei.toString(16)}]});
-      var t={type:mode==="deposit"?"Deposit":"Withdraw",amount:$("payAmt").value.trim(),time:when(new Date()),status:"Pending",hash:String(hash)};
-      txs.unshift(t);saveTx();renderTx();watch(t);
+      var t={type:mode==="deposit"?"Deposit":"Withdraw",amount:$("payAmt").value.trim(),ts:Date.now(),time:when(new Date()),status:"Pending",hash:String(hash)};
+      txs.unshift(t);saveTx();renderHist();watch(t);
       closePay();msg.textContent="Transaction submitted. It will show as Confirmed below.";
     }catch(e){
       msg.textContent=(e&&e.code===4001)?"Cancelled in your wallet.":((e&&e.message)||"Transaction failed.");
@@ -333,8 +309,7 @@ button{font:inherit;cursor:pointer}
   $("bWd").addEventListener("click",function(){openPay("withdraw")});
   if(window.ethereum)txs.forEach(function(t){if(t.status==="Pending"&&/^0x[0-9a-fA-F]{64}$/.test(t.hash||""))watch(t)});
 
-  $("addr").textContent=SHORT;
-  setInterval(function(){if(!document.hidden){loadWallet();loadSim()}},20000);
+  setInterval(function(){if(!document.hidden)loadSim()},20000);
   refresh();
   setInterval(function(){if(!document.hidden)refresh()},60000);
 })();
