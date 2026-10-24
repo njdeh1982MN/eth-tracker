@@ -91,15 +91,22 @@ button{font:inherit;cursor:pointer}
   </div>
 
   <div class="card hist sim">
-    <h2>Simulation</h2>
+    <h2>Simulation · BTC, ETH, SOL, XRP</h2>
     <div class="stats">
       <div class="stat"><span>Profit / loss</span><b id="sPl">—</b></div>
-      <div class="stat"><span>Just holding ETH</span><b id="sHold">—</b></div>
-      <div class="stat"><span>Position</span><b id="sPos">—</b></div>
-      <div class="stat"><span>Trades made</span><b id="sCount">0</b></div>
+      <div class="stat"><span>Just holding the 4 coins</span><b id="sHold">—</b></div>
+      <div class="stat"><span>Open positions</span><b id="sPos">—</b></div>
+      <div class="stat"><span>Wins / closed trades</span><b id="sWin">—</b></div>
     </div>
+    <div class="sub" id="sRep"></div>
+    <div id="coins"></div>
     <div class="sub" id="sNote">Connecting to the bot…</div>
-    <div class="how"><b>What the bot does:</b> every 5 minutes it checks ETH's hourly price trend. It buys when the short-term average rises above the long-term average (EMA 12 over EMA 26) and the market is not overheated (RSI below 70). It sells when the price drops 2% (stop loss), gains 4% (take profit), or the trend turns down. It trades with its whole balance, one trade at a time, includes fees and slippage, and pauses if the balance falls 10% from its peak.</div>
+    <div class="how"><b>What the bot does:</b> every 5 minutes it checks the hourly trend of BTC, ETH, SOL and XRP, with $50 of the virtual $200 for each coin. When the short-term average (EMA 12) rises above the long-term average (EMA 26) and RSI is below 70, it buys (long). When it falls below and RSI is above 30, it sells short. It exits on a 2% stop loss, a 4% profit target, or when the trend reverses. Fees and slippage are included, and it pauses if the total balance falls 10% from its peak.</div>
+  </div>
+
+  <div class="card hist">
+    <h2>Activity</h2>
+    <div id="actList"><div class="empty">No activity yet.</div></div>
   </div>
 
   <div class="card hist">
@@ -125,6 +132,7 @@ button{font:inherit;cursor:pointer}
   var $=function(i){return document.getElementById(i)};
   var usd=function(n,d){return "$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:d==null?2:d,maximumFractionDigits:d==null?2:d})};
   var pct=function(n){return (n>=0?"+":"")+n.toFixed(2)+"%"};
+  var sg=function(n){return (n>=0?"+":"-")+usd(Math.abs(n))};
   var when=function(t){return new Date(t).toLocaleString([],{dateStyle:"medium",timeStyle:"short"})};
 
   function get(path){
@@ -180,19 +188,47 @@ button{font:inherit;cursor:pointer}
 
   /* ---- Simulation bot (runs on the Cloudflare server) ---- */
   var simTrades=[];
+  var NAMES=["BTC","ETH","SOL","XRP"];
+  function row(a,b,c,d,cls){
+    var r=document.createElement("div");r.className="tx";
+    var l=document.createElement("div");l.textContent=a;
+    var sm=document.createElement("small");sm.textContent=b;l.appendChild(sm);
+    var rt=document.createElement("div");rt.style.textAlign="right";
+    var bb=document.createElement("b");bb.textContent=c;rt.appendChild(bb);
+    if(d){var q=document.createElement("small");q.textContent=d;if(cls)q.className=cls;rt.appendChild(q)}
+    r.appendChild(l);r.appendChild(rt);return r;
+  }
   function applySim(s){
     var on=!!s.running, b=s.startBal||200, eq=s.equity==null?b:s.equity, pl=eq-b;
+    var part=b/NAMES.length, cs=s.coins||{}, trades=s.trades||[];
     $("bar").className="bar"+(on?" on":"");
     $("state").textContent=on?"Running":"Stopped";
     $("bStart").disabled=on;$("bStop").disabled=!on;
     $("bal").textContent=usd(eq);
     var p=$("sPl");p.textContent=(pl>=0?"+":"-")+usd(Math.abs(pl))+" ("+pct(pl/b*100)+")";p.className=pl>=0?"up":"down";
-    $("sHold").textContent=(s.startPrice&&s.price)?usd(b*s.price/s.startPrice):"—";
-    $("sPos").textContent=s.qty>0?s.qty.toFixed(4)+" ETH @ "+usd(s.entryPrice):"None";
-    $("sCount").textContent=(s.trades||[]).length;
-    var rs=s.ind&&s.ind.rsi!=null?" · RSI "+s.ind.rsi.toFixed(0):"";
-    $("sNote").textContent=(s.note||"")+rs+(s.lastTick?" · last check "+new Date(s.lastTick).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"");
-    simTrades=s.trades||[];renderHist();
+    var hold=0,hn=0,open=0;
+    NAMES.forEach(function(n){var c=cs[n];if(!c)return;if(c.startPrice&&c.price){hold+=part*c.price/c.startPrice;hn++}else hold+=part;if(c.pos)open++});
+    $("sHold").textContent=hn?usd(hold):"—";
+    $("sPos").textContent=open+" of "+NAMES.length;
+    var closed=trades.filter(function(t){return t.pnl!=null});
+    var wins=closed.filter(function(t){return t.pnl>0}).length;
+    $("sWin").textContent=wins+" / "+closed.length;
+    var best=null,worst=null;closed.forEach(function(t){if(best===null||t.pnl>best)best=t.pnl;if(worst===null||t.pnl<worst)worst=t.pnl});
+    $("sRep").textContent="Checks made: "+(s.checks||0)+" · Trades: "+trades.length+(closed.length?" · Best "+sg(best)+" · Worst "+sg(worst):"");
+    var box=$("coins");box.innerHTML="";
+    NAMES.forEach(function(n){
+      var c=cs[n];if(!c)return;
+      var st=c.pos===1?"Long @ "+usd(c.entry):c.pos===-1?"Short @ "+usd(c.entry):"Waiting";
+      var tr=c.ind?" · trend "+c.ind.trend+(c.ind.rsi!=null?" · RSI "+c.ind.rsi.toFixed(0):""):"";
+      var d=(c.equity||part)-part;
+      box.appendChild(row(n+"  "+(c.price?usd(c.price):"—"),st+tr,usd(c.equity==null?part:c.equity),(d>=0?"+":"-")+usd(Math.abs(d)),d>=0?"up":"down"));
+    });
+    $("sNote").textContent=(s.note||"")+(s.lastTick?" · last check "+new Date(s.lastTick).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"");
+    var al=$("actList");al.innerHTML="";
+    var log=(s.log||[]).slice(0,15);
+    if(!log.length){var e=document.createElement("div");e.className="empty";e.textContent="No activity yet.";al.appendChild(e)}
+    log.forEach(function(x){var r=document.createElement("div");r.className="tx";var l=document.createElement("div");l.textContent=x.text;var sm=document.createElement("small");sm.textContent=when(x.time);l.appendChild(sm);r.appendChild(l);al.appendChild(r)});
+    simTrades=trades;renderHist();
   }
   function loadSim(){
     fetch(BOT+"/status").then(function(r){return r.json()}).then(applySim)
@@ -237,7 +273,7 @@ button{font:inherit;cursor:pointer}
       r.style.textAlign="right";
       if(it.sim){
         var t=it.sim;
-        l.textContent=t.type+" (test) · "+t.reason;sm.textContent=when(t.time);b.textContent=usd(t.price);r.appendChild(b);
+        l.textContent=t.coin+" · "+t.type;sm.textContent=when(t.time)+" · "+t.reason+" · test";b.textContent=usd(t.price);r.appendChild(b);
         if(t.pnl!=null){var q=document.createElement("small");q.className=t.pnl>=0?"up":"down";q.textContent=(t.pnl>=0?"+":"-")+usd(Math.abs(t.pnl));r.appendChild(q)}
       }else{
         var x=it.tx;
